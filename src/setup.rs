@@ -25,19 +25,21 @@ pub async fn setup() -> anyhow::Result<AppState> {
     let host = env::var("HOST").expect("missing HOST");
 
     // Load environment variables
-    let github_client_id = env::var("GITHUB_CLIENT_ID").expect("GITHUB_CLIENT_ID must be set");
-    let github_client_secret =
-        env::var("GITHUB_CLIENT_SECRET").expect("GITHUB_CLIENT_SECRET must be set");
-    let jwt_secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    // GitHub login is optional: leave GITHUB_CLIENT_ID unset and every
+    // request is treated as an anonymous user keyed by client IP.
+    let github_client_id = env::var("GITHUB_CLIENT_ID").unwrap_or_default();
+    let github_client_secret = env::var("GITHUB_CLIENT_SECRET").unwrap_or_default();
+    let jwt_secret = env::var("JWT_SECRET").unwrap_or_default();
+    let github_login = !github_client_id.is_empty();
 
-    if github_client_id.is_empty() {
-        panic!("GITHUB_CLIENT_ID must be set");
+    if github_login && github_client_secret.is_empty() {
+        panic!("GITHUB_CLIENT_SECRET must be set when GITHUB_CLIENT_ID is set");
     }
-    if github_client_secret.is_empty() {
-        panic!("GITHUB_CLIENT_SECRET must be set");
+    if github_login && jwt_secret.is_empty() {
+        panic!("JWT_SECRET must be set when GITHUB_CLIENT_ID is set");
     }
-    if jwt_secret.is_empty() {
-        panic!("JWT_SECRET must be set");
+    if !github_login {
+        warn!("GITHUB_CLIENT_ID not set: GitHub login disabled, limits are per IP");
     }
 
     // read keys from env, otherwise generate one
@@ -110,6 +112,10 @@ pub async fn setup() -> anyhow::Result<AppState> {
     let l402_invoice_amount_sats = env::var("L402_INVOICE_AMOUNT")
         .unwrap_or_else(|_| "1000".to_string())
         .parse::<u64>()?;
+
+    if l402_enabled && auth.jwt_secret.is_empty() {
+        panic!("JWT_SECRET must be set when L402_ENABLED is true");
+    }
 
     // Initialize mainnet LND client if reorg or L402 is enabled
     let needs_mainnet_lnd = reorg_enabled || l402_enabled;

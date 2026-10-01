@@ -1,5 +1,6 @@
 use crate::l402::{validate_l402_credentials, L402Error};
 use crate::AppState;
+use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -10,6 +11,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -372,6 +374,7 @@ pub struct AuthUser {
 
 // Middleware for JWT and L402 verification
 pub async fn auth_middleware<B>(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     mut request: Request<B>,
     next: Next<B>,
@@ -381,10 +384,25 @@ pub async fn auth_middleware<B>(
         .get::<AppState>()
         .expect("AppState not found in extensions");
 
+    let github_login = !state.auth.github_client_id.is_empty();
     let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or(AuthError::MissingToken)?;
+        .and_then(|v| v.to_str().ok());
+
+    // Without GitHub login, anything that isn't an L402 credential is an
+    // anonymous user keyed by client IP, so per-user limits become per-IP.
+    let auth_header = match auth_header {
+        Some(h) if github_login || h.starts_with("L402 ") => h,
+        _ if !github_login => {
+            let ip = crate::client_ip(&headers, peer, state.trusted_gateway);
+            request.extensions_mut().insert(AuthUser {
+                username: ip,
+                is_premium: false,
+            });
+            return Ok(next.run(request).await);
+        }
+        _ => return Err(AuthError::MissingToken),
+    };
 
     let auth_user = if let Some(token) = auth_header.strip_prefix("Bearer ") {
         // GitHub OAuth JWT path
