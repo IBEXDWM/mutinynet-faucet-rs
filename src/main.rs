@@ -1080,7 +1080,7 @@ async fn reorg_invoice_handler(
 /// client IP as the rightmost entry. Any earlier entries are
 /// client-supplied and must not be trusted, so only the rightmost entry is
 /// used. Direct connections from any other peer ignore the header entirely.
-fn client_ip(headers: &HeaderMap, peer: SocketAddr, gateway: Option<IpAddr>) -> String {
+pub(crate) fn client_ip(headers: &HeaderMap, peer: SocketAddr, gateway: Option<IpAddr>) -> String {
     if is_trusted_proxy(&peer.ip(), gateway) {
         if let Some(xff) = headers
             .get("x-forwarded-for")
