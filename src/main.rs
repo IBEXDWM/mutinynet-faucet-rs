@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{oneshot, Mutex};
 use tonic_openssl_lnd::{LndLightningClient, LndRouterClient};
-use tower_http::cors::{AllowMethods, CorsLayer};
+use tower_http::cors::{AllowMethods, Any, CorsLayer};
 
 use crate::admin::{admin_add, admin_list, admin_remove};
 use crate::analytics::{
@@ -275,17 +275,24 @@ async fn main() -> anyhow::Result<()> {
         .layer(
             // Only the configured frontend origin may make credentialed
             // cross-origin requests; Any would let any website use a
-            // leaked JWT from a browser.
-            CorsLayer::new()
-                .allow_origin(
+            // leaked JWT from a browser. Without GitHub login there are
+            // no credentials to leak, so any origin is fine.
+            if state.auth.github_client_id.is_empty() {
+                CorsLayer::new().allow_origin(Any)
+            } else {
+                CorsLayer::new().allow_origin(
                     state
                         .host
                         .trim_end_matches('/')
                         .parse::<axum::http::HeaderValue>()
                         .expect("HOST must be a valid origin URL"),
                 )
-                .allow_headers([axum::http::header::AUTHORIZATION])
-                .allow_methods(AllowMethods::any()),
+            }
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+            ])
+            .allow_methods(AllowMethods::any()),
         );
 
     // periodically prune empty rate-limit trackers so the map stays bounded
